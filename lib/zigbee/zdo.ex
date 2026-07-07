@@ -84,7 +84,7 @@ defmodule Zigbee.ZDO do
     <<endpoint, profile::little-16, device::little-16, version, in_count, rest::binary>> = desc
     in_bytes = in_count * 2
 
-    <<in_raw::binary-size(in_bytes), out_count, out_raw::binary-size(out_count * 2), _::binary>> =
+    <<in_raw::binary-size(^in_bytes), out_count, out_raw::binary-size(out_count * 2), _::binary>> =
       rest
 
     {:ok,

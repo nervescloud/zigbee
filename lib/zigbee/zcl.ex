@@ -164,14 +164,14 @@ defmodule Zigbee.ZCL do
 
   def decode_value(type, bin) do
     size = type_size(type)
-    <<raw::binary-size(size), rest::binary>> = bin
+    <<raw::binary-size(^size), rest::binary>> = bin
 
     value =
       if signed?(type) do
-        <<v::little-signed-size(size)-unit(8)>> = raw
+        <<v::little-signed-size(^size)-unit(8)>> = raw
         v
       else
-        <<v::little-unsigned-size(size)-unit(8)>> = raw
+        <<v::little-unsigned-size(^size)-unit(8)>> = raw
         v
       end
 

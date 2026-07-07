@@ -24,8 +24,6 @@ defmodule Zigbee.Interview do
   devices need a Basic-cluster read after binding before they report).
   """
 
-  require Logger
-
   alias Zigbee.{ZDO, ZCL, Message}
 
   # Zigbee application profiles (spec constants).

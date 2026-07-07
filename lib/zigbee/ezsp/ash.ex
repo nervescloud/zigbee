@@ -201,7 +201,7 @@ defmodule Zigbee.EZSP.ASH do
 
   defp verify_crc(unstuffed) do
     body_len = byte_size(unstuffed) - 2
-    <<body::binary-size(body_len), crc::16>> = unstuffed
+    <<body::binary-size(^body_len), crc::16>> = unstuffed
 
     if crc(body) == crc, do: {:ok, body}, else: {:error, :crc_mismatch}
   end
