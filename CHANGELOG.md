@@ -42,4 +42,4 @@ pattern matching.
 - Only the Silicon Labs EmberZNet (EZSP) family is supported. TI Z-Stack and deCONZ
   radios need their own `Zigbee.Adapter` backend.
 
-[0.1.0]: https://github.com/joshkalderimis/zigbee/releases/tag/v0.1.0
+[0.1.0]: https://github.com/nervescloud/zigbee/releases/tag/v0.1.0
