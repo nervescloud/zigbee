@@ -34,6 +34,7 @@ defmodule Zigbee.EZSP do
   # against EmberZNet 7.4.4.0 firmware.
   @frame_ids %{
     version: 0x0000,
+    set_manufacturer_code: 0x0015,
     add_endpoint: 0x0002,
     get_eui64: 0x0026,
     get_node_id: 0x0027,
@@ -49,7 +50,10 @@ defmodule Zigbee.EZSP do
     get_configuration_value: 0x0052,
     set_policy: 0x0055,
     get_policy: 0x0056,
-    set_initial_security_state: 0x0068
+    set_initial_security_state: 0x0068,
+    # Security Manager (EZSP v13). addTransientLinkKey was removed in v13; the
+    # well-known join link key must be installed via importTransientKey.
+    import_transient_key: 0x0111
   }
 
   # Callback (unsolicited) frame IDs the higher layers care about.

@@ -4,10 +4,11 @@ defmodule Zigbee.ZCL do
   inside an APS unicast on a Home Automation endpoint (profile 0x0104).
 
   This is pure, transport-agnostic encoding/decoding: build the global commands
-  we need to interview and configure a sensor (Read Attributes, Configure
-  Reporting) and decode what it sends back (Read Attributes Response, Report
-  Attributes). It is deliberately independent of EZSP; `Zigbee.EZSP.Adapter` wraps
-  these bytes in an `EmberApsFrame` and hands them to the NCP.
+  we need to interview, configure, and control a device (Read Attributes, Write
+  Attributes — including manufacturer-specific — and Configure Reporting) and
+  decode what it sends back (Read Attributes Response, Report Attributes). It is
+  deliberately independent of EZSP; `Zigbee.EZSP.Adapter` wraps these bytes in an
+  `EmberApsFrame` and hands them to the NCP.
 
   ## ZCL frame layout
 
@@ -27,6 +28,7 @@ defmodule Zigbee.ZCL do
   # Global (profile-wide) command ids.
   @cmd_read_attributes 0x00
   @cmd_read_attributes_response 0x01
+  @cmd_write_attributes 0x02
   @cmd_configure_reporting 0x06
   @cmd_configure_reporting_response 0x07
   @cmd_report_attributes 0x0A
@@ -70,10 +72,35 @@ defmodule Zigbee.ZCL do
     frame(0x00, seq, @cmd_configure_reporting, body)
   end
 
-  # Assemble a profile-wide (global) ZCL frame with the default frame control
-  # (to-server, default response enabled).
-  defp frame(frame_control, seq, command, body) do
-    <<frame_control, seq, command, body::binary>>
+  @doc """
+  Build a **Write Attributes** (global cmd 0x02) frame.
+
+  Each record is `%{attr_id, type, value}` (value encoded per its ZCL `type`).
+  `opts[:manufacturer_code]` makes it a manufacturer-specific frame (sets the MS
+  frame-control bit and inserts the 16-bit code) — required for vendor attributes
+  like Aqara's `manuSpecificLumi` (code `0x115F`).
+  """
+  @spec write_attributes(byte(), [map()], keyword()) :: binary()
+  def write_attributes(seq, records, opts \\ []) when is_list(records) do
+    body =
+      for %{attr_id: id, type: type, value: value} <- records, into: <<>> do
+        <<id::little-16, type, encode_value(type, value)::binary>>
+      end
+
+    frame(0x00, seq, @cmd_write_attributes, body, opts)
+  end
+
+  # Assemble a profile-wide (global) ZCL frame. Default frame control is
+  # to-server with default response enabled; `opts[:manufacturer_code]` switches
+  # to a manufacturer-specific frame (MS bit set, code inserted after the FC byte).
+  defp frame(frame_control, seq, command, body, opts \\ []) do
+    case Keyword.get(opts, :manufacturer_code) do
+      nil ->
+        <<frame_control, seq, command, body::binary>>
+
+      code ->
+        <<frame_control ||| 0x04, code::little-16, seq, command, body::binary>>
+    end
   end
 
   # ── Decoding ────────────────────────────────────────────────────────────────
@@ -145,6 +172,8 @@ defmodule Zigbee.ZCL do
   @spec encode_value(byte(), term()) :: binary()
   def encode_value(0x10, true), do: <<0x01>>
   def encode_value(0x10, false), do: <<0x00>>
+  # 0x41 octet string / 0x42 char string: length-prefixed bytes.
+  def encode_value(0x41, s) when is_binary(s), do: <<byte_size(s), s::binary>>
   def encode_value(0x42, s) when is_binary(s), do: <<byte_size(s), s::binary>>
 
   def encode_value(type, value) when is_integer(value) do
@@ -202,6 +231,8 @@ defmodule Zigbee.ZCL do
 
   defp command_name(0x00), do: :read_attributes
   defp command_name(0x01), do: :read_attributes_response
+  defp command_name(0x02), do: :write_attributes
+  defp command_name(0x04), do: :write_attributes_response
   defp command_name(0x06), do: :configure_reporting
   defp command_name(0x07), do: :configure_reporting_response
   defp command_name(0x0A), do: :report_attributes

@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `Zigbee.ZCL.write_attributes/3` — manufacturer-specific writes (optional
+  `:manufacturer_code`) plus octet-string (`0x41`) value encoding.
+- `Zigbee.EZSP.Adapter`: injectable EZSP process via the `:ezsp` option, with
+  integration tests driven by a fake NCP (`Zigbee.FakeEZSP`).
+- Trust-center / end-device config suite applied on both form and reestablish
+  (TC address cache, indirect-transmission / end-device-poll / transient-key
+  timeouts, max end-device children).
+- Well-known transient link key installed on `permit_joining/2`, hashed
+  trust-center link keys, and an Aqara/Lumi manufacturer-code join workaround.
+
+### Fixed
+
+- EZSP key-request policy ids were wrong (`TC_KEY_REQUEST` `0x09`→`0x05`,
+  `APP_KEY_REQUEST` `0x0A`→`0x06`) and the TC-key decision was inverted (`0x50`
+  is DENY; now `0x51` = allow). Zigbee 3.0 devices that request keys now
+  commission instead of rejoin-looping.
+- `incomingMessageHandler` decode crashed on EmberZNet v13 frames that append a
+  trailing byte after the APS payload.
+- Trust-center / key-request policies are now re-applied on
+  `reestablish_network/2` — they are volatile across NCP reboots.
+- Security bitmask corrected: removed the stray `GET_LINK_KEY_WHEN_JOINING`
+  flag (wrong on a coordinator) and switched to hashed link keys.
+
 ## [0.1.0] - 2026-07-07
 
 Initial release: a from-scratch, pure-Elixir Zigbee coordinator stack for Silicon

@@ -22,6 +22,24 @@ defmodule Zigbee.ZCLTest do
       assert ZCL.configure_reporting(0x01, [rec]) ==
                <<0x00, 0x01, 0x06, 0x00, 0x00, 0x00, 0x10, 0x01, 0x00, 0x3C, 0x00>>
     end
+
+    test "write_attributes builds a plain global write" do
+      # write attr 0x0009 uint8 = 1
+      assert ZCL.write_attributes(0x01, [%{attr_id: 0x0009, type: 0x20, value: 1}]) ==
+               <<0x00, 0x01, 0x02, 0x09, 0x00, 0x20, 0x01>>
+    end
+
+    test "write_attributes sets the MS bit and inserts the manufacturer code" do
+      # manufacturer-specific write of octet-string "AB" to attr 0xFFF2, code 0x115F
+      rec = %{attr_id: 0xFFF2, type: 0x41, value: "AB"}
+
+      assert ZCL.write_attributes(0x07, [rec], manufacturer_code: 0x115F) ==
+               <<0x04, 0x5F, 0x11, 0x07, 0x02, 0xF2, 0xFF, 0x41, 0x02, 0x41, 0x42>>
+    end
+
+    test "encode_value handles octet strings (0x41)" do
+      assert ZCL.encode_value(0x41, "xy") == <<0x02, 0x78, 0x79>>
+    end
   end
 
   describe "decoding reports" do

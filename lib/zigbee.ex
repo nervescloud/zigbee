@@ -72,10 +72,11 @@ defmodule Zigbee do
   Form a centralized (trust-center) coordinator network and return its parameters.
 
   Options (all optional): `:channel` (11..26, default 15), `:pan_id`,
-  `:extended_pan_id` (8 bytes), `:tx_power` (dBm), `:network_key` (16 bytes), and
-  `:endpoints` (`:default` registers HA endpoint 1, `:none`, or a list of
-  `{endpoint, profile, device_id, in_clusters, out_clusters}`). Endpoints are
-  registered here because they must exist before the network comes up.
+  `:extended_pan_id` (8 bytes), `:tx_power` (dBm), `:network_key` (16 bytes),
+  `:tc_link_key` (16 bytes, the trust-center link-key derivation master; random by
+  default), and `:endpoints` (`:default` registers HA endpoint 1, `:none`, or a
+  list of `{endpoint, profile, device_id, in_clusters, out_clusters}`). Endpoints
+  are registered here because they must exist before the network comes up.
   """
   def form_network(%Adapter{module: m, ref: r}, opts \\ []), do: m.form_network(r, opts)
 
