@@ -26,15 +26,49 @@ defmodule Zigbee.EZSP.Adapter do
   # ── EZSP enum constants (EmberZNet) ───────────────────────────────────────
   @config_stack_profile 0x0C
   @config_security_level 0x0D
+  # TC / end-device config suite (mirrors zigbee-herdsman's ember driver). The TC
+  # address cache is REQUIRED for the trust center to track joining devices' security
+  # state — without it devices fail commissioning and rejoin-loop.
+  @config_max_end_device_children 0x11
+  @config_indirect_transmission_timeout 0x12
+  @config_end_device_poll_timeout 0x13
+  @config_tc_address_cache_size 0x19
+  @config_transient_key_timeout_s 0x36
+  # EZSP policy IDs (EzspPolicyId). NOTE the correct values: TC_KEY_REQUEST is 0x05
+  # and APP_KEY_REQUEST is 0x06. (Earlier this file used 0x09/0x0A — 0x09 is actually
+  # TC_REJOINS_USING_WELL_KNOWN_KEY and 0x0A is a removed RF4CE policy that returns
+  # ERROR_INVALID_ID, so the key-request policies were never actually applied.)
   @policy_trust_center 0x00
-  @policy_tc_key_request 0x09
-  @policy_app_key_request 0x0A
+  @policy_tc_key_request 0x05
+  @policy_app_key_request 0x06
+  # EzspDecisionBitmask for the trust-center policy: ALLOW_JOINS|ALLOW_UNSECURED_REJOINS.
   @decision_allow_joins 0x03
-  @decision_allow_tc_key_requests 0x50
-  @decision_deny_app_key_requests 0x60
-  # HAVE_PRECONFIGURED_KEY|HAVE_NETWORK_KEY|REQUIRE_ENCRYPTED_KEY|TC_GLOBAL_LINK_KEY
-  @security_bitmask 0x0F04
+  # EzspDecisionId for the key-request policies. 0x50 is DENY_TC_KEY_REQUESTS (the old
+  # value here was wrong); 0x51 = ALLOW_TC_KEY_REQUESTS_AND_SEND_CURRENT_KEY.
+  @decision_allow_tc_key_requests 0x51
+  @decision_allow_app_key_requests 0x61
+  # HAVE_PRECONFIGURED_KEY(0x0100) | HAVE_NETWORK_KEY(0x0200) |
+  # REQUIRE_ENCRYPTED_KEY(0x0800) | TRUST_CENTER_USES_HASHED_LINK_KEY(0x0084).
+  # Matches zigbee-herdsman's forming bitmask.
+  #
+  # Hashed link key (0x0084 = global-link-key 0x0004 + hashed 0x0080): the TC derives
+  # each device's link key on the fly (no key-table storage; the ZBT-2 firmware has
+  # KEY_TABLE_SIZE=0, which is normal for EmberZNet 7.x — keys live in the Security
+  # Manager). Must NOT set GET_LINK_KEY_WHEN_JOINING (0x0400) — a joining-node flag
+  # that is wrong on a coordinator.
+  @security_bitmask 0x0B84
   @global_tc_link_key "ZigBeeAlliance09"
+  # Wildcard EUI64 (all 0xFF) = a transient key usable by ANY joining device.
+  @wildcard_eui64 <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>
+  @sec_man_flag_none 0x00
+
+  # Lumi/Aqara devices read the coordinator's Node Descriptor manufacturer code
+  # during commissioning and LEAVE if it isn't Lumi's, causing a rejoin loop. When
+  # a device with a Lumi OUI joins, set the coordinator's manufacturer code to match
+  # (mirrors zigbee-herdsman's WORKAROUND_JOIN_MANUF_IEEE_PREFIX_TO_CODE). OUIs are
+  # big-endian (the high 3 bytes of the EUI64).
+  @lumi_manufacturer_code 0x115F
+  @lumi_ouis [<<0x54, 0xEF, 0x44>>, <<0x04, 0xCF, 0x8C>>]
   # EmberApsOption: RETRY (0x0040) | ENABLE_ROUTE_DISCOVERY (0x0100).
   @aps_default_options 0x0140
   @ha_profile 0x0104
@@ -86,9 +120,7 @@ defmodule Zigbee.EZSP.Adapter do
 
   @impl GenServer
   def init(opts) do
-    ezsp_opts = Keyword.take(opts, [:device, :speed, :flow_control])
-
-    case EZSP.start_link(ezsp_opts) do
+    case start_or_use_ezsp(opts) do
       {:ok, ezsp} ->
         :ok = EZSP.subscribe(ezsp, self())
         {:ok, %{ezsp: ezsp, subscriber: nil, up_from: nil, up_timer: nil}}
@@ -98,11 +130,21 @@ defmodule Zigbee.EZSP.Adapter do
     end
   end
 
+  # Use a caller-supplied EZSP process when `:ezsp` is given (e.g. a test double);
+  # otherwise start a real one for the configured serial device.
+  defp start_or_use_ezsp(opts) do
+    case Keyword.get(opts, :ezsp) do
+      nil -> EZSP.start_link(Keyword.take(opts, [:device, :speed, :flow_control]))
+      ezsp -> {:ok, ezsp}
+    end
+  end
+
   @impl GenServer
   def handle_call(:info, _from, s), do: {:reply, EZSP.info(s.ezsp), s}
   def handle_call({:subscribe, pid}, _from, s), do: {:reply, :ok, %{s | subscriber: pid}}
 
   def handle_call({:permit_joining, seconds}, _from, s) do
+    _ = import_well_known_transient_key(s.ezsp)
     {:ok, %{params: <<status>>}} = EZSP.command(s.ezsp, :permit_joining, <<seconds>>)
     {:reply, check(status, :permit_joining), s}
   end
@@ -168,10 +210,30 @@ defmodule Zigbee.EZSP.Adapter do
     {:noreply, %{s | up_from: nil, up_timer: nil}}
   end
 
-  def handle_info({:ezsp_callback, frame}, s) do
+  # Join frames get the Lumi manufacturer-code workaround applied before the
+  # device_joined event is delivered.
+  def handle_info({:ezsp_callback, %{frame_id: @join_frame, params: params} = frame}, s) do
+    _ = maybe_apply_manuf_workaround(s.ezsp, decode_join(params))
+
     case normalize(frame) do
       {:ok, event} -> if s.subscriber, do: send(s.subscriber, event)
       :ignore -> :ok
+    end
+
+    {:noreply, s}
+  end
+
+  def handle_info({:ezsp_callback, frame}, s) do
+    case normalize(frame) do
+      {:ok, event} ->
+        if s.subscriber, do: send(s.subscriber, event)
+
+      :ignore ->
+        # Unhandled NCP callback — logged at debug for troubleshooting (key updates,
+        # route errors, etc). Add a dedicated clause above to handle one for real.
+        Logger.debug(
+          "EZSP cb 0x#{Integer.to_string(frame.frame_id, 16)} params=#{inspect(frame.params, base: :hex, limit: :infinity)}"
+        )
     end
 
     {:noreply, s}
@@ -182,7 +244,15 @@ defmodule Zigbee.EZSP.Adapter do
   # ── Normalization: EZSP callback → neutral event ──────────────────────────
 
   defp normalize(%{frame_id: @join_frame, params: params}) do
-    {:ok, {:zigbee, :device_joined, Map.take(decode_join(params), [:node_id, :eui64])}}
+    j = decode_join(params)
+    # update = EmberDeviceUpdate (0=secured rejoin, 1=unsecured join, 2=device LEFT,
+    # 3=unsecured rejoin); decision = the TC join decision. Handy for spotting
+    # leave/rejoin loops.
+    Logger.debug(
+      "trustCenterJoin node=0x#{Integer.to_string(j.node_id, 16)} update=#{j.update} decision=#{j.decision}"
+    )
+
+    {:ok, {:zigbee, :device_joined, Map.take(j, [:node_id, :eui64])}}
   end
 
   defp normalize(%{frame_id: @incoming_frame, params: params}) do
@@ -201,7 +271,7 @@ defmodule Zigbee.EZSP.Adapter do
   defp decode_incoming(
          <<_type, profile::little-16, cluster::little-16, src_ep, dst_ep, _options::little-16,
            group::little-16, aps_seq, lqi, rssi::signed-8, sender::little-16, _binding_index,
-           _address_index, len, payload::binary-size(len)>>
+           _address_index, len, payload::binary-size(len), _rest::binary>>
        ) do
     %Message{
       source: sender,
@@ -259,11 +329,24 @@ defmodule Zigbee.EZSP.Adapter do
   defp prepare_reestablish(ezsp, opts) do
     endpoints = Keyword.get(opts, :endpoints, :default)
 
-    with :ok <- set_config(ezsp, @config_stack_profile, 2),
-         :ok <- set_config(ezsp, @config_security_level, 5),
-         :ok <- register_endpoints(ezsp, endpoints) do
+    with :ok <- apply_config(ezsp),
+         :ok <- register_endpoints(ezsp, endpoints),
+         :ok <- apply_policies(ezsp) do
       {:ok, %{params: <<status>>}} = EZSP.command(ezsp, :network_init, <<0x0000::little-16>>)
       {:ok, status}
+    end
+  end
+
+  # Trust-center + key-request policies. These are volatile (lost on every NCP
+  # reset, like config and endpoints), so BOTH form and reestablish must set them.
+  # App-key requests must be ALLOWED: Zigbee 3.0 devices (e.g. Aqara) request an
+  # application link key from the TC after joining, and if it's denied they fail the
+  # key update and — with REQUIRE_ENCRYPTED_KEY set — get removed, looping forever.
+  defp apply_policies(ezsp) do
+    with :ok <- set_policy(ezsp, @policy_trust_center, @decision_allow_joins) do
+      best_effort_policy(ezsp, @policy_tc_key_request, @decision_allow_tc_key_requests)
+      best_effort_policy(ezsp, @policy_app_key_request, @decision_allow_app_key_requests)
+      :ok
     end
   end
 
@@ -276,15 +359,17 @@ defmodule Zigbee.EZSP.Adapter do
     tx_power = Keyword.get(opts, :tx_power, 8)
     channel = Keyword.get(opts, :channel, 15)
     network_key = Keyword.get(opts, :network_key, :crypto.strong_rand_bytes(16))
+    # The TC link key is the hashed-derivation master — it must be RANDOM and
+    # distinct from the well-known join key (imported separately as a transient),
+    # or the two collide in the NCP's key handling. Persisted in NCP tokens, so
+    # reestablish restores it. Matches zigbee-herdsman's random tcLinkKey.
+    tc_link_key = Keyword.get(opts, :tc_link_key, :crypto.strong_rand_bytes(16))
     endpoints = Keyword.get(opts, :endpoints, :default)
 
-    with :ok <- set_config(ezsp, @config_stack_profile, 2),
-         :ok <- set_config(ezsp, @config_security_level, 5),
+    with :ok <- apply_config(ezsp),
          :ok <- register_endpoints(ezsp, endpoints),
-         :ok <- set_security_state(ezsp, network_key),
-         :ok <- set_policy(ezsp, @policy_trust_center, @decision_allow_joins),
-         _ <- best_effort_policy(ezsp, @policy_tc_key_request, @decision_allow_tc_key_requests),
-         _ <- best_effort_policy(ezsp, @policy_app_key_request, @decision_deny_app_key_requests) do
+         :ok <- set_security_state(ezsp, tc_link_key, network_key),
+         :ok <- apply_policies(ezsp) do
       do_form(ezsp, ext_pan_id, pan_id, tx_power, channel)
     end
   end
@@ -311,6 +396,31 @@ defmodule Zigbee.EZSP.Adapter do
     end)
   end
 
+  # Apply the base + TC/end-device config suite. Strict on stack profile + security
+  # level (form fails without them); best-effort on the rest (some are fixed in NCP
+  # firmware and can't be changed). Must run before form_network / network_init.
+  defp apply_config(ezsp) do
+    with :ok <- set_config(ezsp, @config_stack_profile, 2),
+         :ok <- set_config(ezsp, @config_security_level, 5) do
+      best_effort_config(ezsp, @config_tc_address_cache_size, 2)
+      best_effort_config(ezsp, @config_indirect_transmission_timeout, 7680)
+      best_effort_config(ezsp, @config_end_device_poll_timeout, 8)
+      best_effort_config(ezsp, @config_transient_key_timeout_s, 300)
+      best_effort_config(ezsp, @config_max_end_device_children, 32)
+      :ok
+    end
+  end
+
+  defp best_effort_config(ezsp, id, value) do
+    case set_config(ezsp, id, value) do
+      :ok ->
+        :ok
+
+      {:error, {_, status}} ->
+        Logger.debug("config 0x#{Integer.to_string(id, 16)} not set (#{inspect(status)})")
+    end
+  end
+
   defp set_config(ezsp, config_id, value) do
     {:ok, %{params: <<status>>}} =
       EZSP.command(ezsp, :set_configuration_value, <<config_id, value::little-16>>)
@@ -333,10 +443,52 @@ defmodule Zigbee.EZSP.Adapter do
     end
   end
 
-  defp set_security_state(ezsp, network_key) do
+  # Install the well-known 'ZigBeeAlliance09' key as a transient link key so a
+  # joining device can authenticate its initial join. REQUIRED in hashed-link-key
+  # mode: the preconfigured key is only the derivation master, so without the plain
+  # well-known key present the TC can't authenticate the join and the device
+  # rejoin-loops. Mirrors zigbee-herdsman's importTransientKey on permit-join.
+  defp import_well_known_transient_key(ezsp) do
+    params = @wildcard_eui64 <> @global_tc_link_key <> <<@sec_man_flag_none>>
+
+    case EZSP.command(ezsp, :import_transient_key, params) do
+      {:ok, %{params: <<0x00, 0x00, 0x00, 0x00>>}} ->
+        :ok
+
+      {:ok, %{params: <<status::little-32>>}} ->
+        Logger.warning("importTransientKey sl_status 0x#{Integer.to_string(status, 16)}")
+
+      other ->
+        Logger.warning("importTransientKey failed: #{inspect(other)}")
+    end
+  end
+
+  # Skip on DEVICE_LEFT (update == 2); otherwise set the coordinator's manufacturer
+  # code to Lumi's if the joining device has a Lumi OUI. eui64 is wire order (LE), so
+  # the OUI is the last 3 bytes reversed.
+  defp maybe_apply_manuf_workaround(_ezsp, %{update: 2}), do: :ok
+
+  defp maybe_apply_manuf_workaround(ezsp, %{eui64: <<_::binary-5, b6, b7, b8>>}) do
+    oui = <<b8, b7, b6>>
+
+    if oui in @lumi_ouis do
+      case EZSP.command(ezsp, :set_manufacturer_code, <<@lumi_manufacturer_code::little-16>>) do
+        {:ok, _} ->
+          Logger.info(
+            "[workaround] coordinator manufacturer code -> 0x#{Integer.to_string(@lumi_manufacturer_code, 16)} for Lumi/Aqara join"
+          )
+
+        other ->
+          Logger.warning("setManufacturerCode failed: #{inspect(other)}")
+      end
+    else
+      :ok
+    end
+  end
+
+  defp set_security_state(ezsp, tc_link_key, network_key) do
     state =
-      <<@security_bitmask::little-16, @global_tc_link_key::binary, network_key::binary-16, 0x00,
-        0::64>>
+      <<@security_bitmask::little-16, tc_link_key::binary-16, network_key::binary-16, 0x00, 0::64>>
 
     {:ok, %{params: <<status>>}} = EZSP.command(ezsp, :set_initial_security_state, state)
     check(status, :set_initial_security_state)
