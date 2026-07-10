@@ -36,7 +36,10 @@ defmodule Zigbee.EZSP.AdapterTest do
     do: <<node_id::little-16, eui64::binary-8, update, 0x00, 0x00, 0x00>>
 
   describe "form_network" do
-    test "applies config + endpoint + security + policies, then forms", %{fake: fake, adapter: adapter} do
+    test "applies config + endpoint + security + policies, then forms", %{
+      fake: fake,
+      adapter: adapter
+    } do
       assert {:ok, params} =
                Adapter.form_network(adapter,
                  channel: 15,
@@ -78,13 +81,17 @@ defmodule Zigbee.EZSP.AdapterTest do
       ids = frame_ids(calls)
       assert @add_endpoint in ids
       assert @form_network in ids
+
       assert Enum.find_index(ids, &(&1 == @add_endpoint)) <
                Enum.find_index(ids, &(&1 == @form_network))
     end
   end
 
   describe "reestablish_network" do
-    test "re-applies config + policies and inits the stored network", %{fake: fake, adapter: adapter} do
+    test "re-applies config + policies and inits the stored network", %{
+      fake: fake,
+      adapter: adapter
+    } do
       assert {:ok, params} = Adapter.reestablish_network(adapter, endpoints: :default)
       assert params.channel == 15
 
@@ -109,24 +116,35 @@ defmodule Zigbee.EZSP.AdapterTest do
   end
 
   describe "permit_joining" do
-    test "installs the well-known transient key before opening the window", %{fake: fake, adapter: adapter} do
+    test "installs the well-known transient key before opening the window", %{
+      fake: fake,
+      adapter: adapter
+    } do
       assert :ok = Adapter.permit_joining(adapter, 60)
 
       # importTransientKey: wildcard EUI64 + 'ZigBeeAlliance09' + flags byte.
       assert FakeEZSP.call_params(fake, @import_transient_key) ==
-               <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>> <> "ZigBeeAlliance09" <> <<0x00>>
+               <<0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>> <>
+                 "ZigBeeAlliance09" <> <<0x00>>
 
       assert FakeEZSP.call_params(fake, @permit_joining) == <<60>>
 
       ids = frame_ids(FakeEZSP.calls(fake))
+
       assert Enum.find_index(ids, &(&1 == @import_transient_key)) <
                Enum.find_index(ids, &(&1 == @permit_joining))
     end
   end
 
   describe "join handling (Lumi manufacturer-code workaround)" do
-    test "sets the coordinator manufacturer code to Lumi's on a Lumi join", %{fake: fake, adapter: adapter} do
-      send(adapter, {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0xE46E, @lumi_eui, 1)}})
+    test "sets the coordinator manufacturer code to Lumi's on a Lumi join", %{
+      fake: fake,
+      adapter: adapter
+    } do
+      send(
+        adapter,
+        {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0xE46E, @lumi_eui, 1)}}
+      )
 
       assert_receive {:zigbee, :device_joined, %{eui64: @lumi_eui, node_id: 0xE46E}}
       # 0x115F little-endian
@@ -135,14 +153,21 @@ defmodule Zigbee.EZSP.AdapterTest do
 
     test "leaves the manufacturer code alone for a non-Lumi join", %{fake: fake, adapter: adapter} do
       other = <<0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08>>
-      send(adapter, {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0x1234, other, 1)}})
+
+      send(
+        adapter,
+        {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0x1234, other, 1)}}
+      )
 
       assert_receive {:zigbee, :device_joined, %{eui64: ^other}}
       refute Enum.any?(FakeEZSP.calls(fake), &match?({@set_manufacturer_code, _}, &1))
     end
 
     test "skips the workaround on a device-left (update=2) event", %{fake: fake, adapter: adapter} do
-      send(adapter, {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0xE46E, @lumi_eui, 2)}})
+      send(
+        adapter,
+        {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0xE46E, @lumi_eui, 2)}}
+      )
 
       assert_receive {:zigbee, :device_joined, _}
       refute Enum.any?(FakeEZSP.calls(fake), &match?({@set_manufacturer_code, _}, &1))

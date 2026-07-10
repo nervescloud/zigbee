@@ -492,7 +492,8 @@ defmodule Zigbee.EZSP.Adapter do
 
   defp set_security_state(ezsp, tc_link_key, network_key) do
     state =
-      <<@security_bitmask::little-16, tc_link_key::binary-16, network_key::binary-16, 0x00, 0::64>>
+      <<@security_bitmask::little-16, tc_link_key::binary-16, network_key::binary-16, 0x00,
+        0::64>>
 
     {:ok, %{params: <<status>>}} = EZSP.command(ezsp, :set_initial_security_state, state)
     check(status, :set_initial_security_state)
