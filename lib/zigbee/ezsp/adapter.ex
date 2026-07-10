@@ -3,8 +3,9 @@ defmodule Zigbee.EZSP.Adapter do
   `Zigbee.Adapter` backend for Silicon Labs EmberZNet dongles (EZSP over ASH).
 
   Owns a `Zigbee.EZSP` connection, runs the EmberZNet-specific coordinator
-  sequence (form, endpoints, unicast), and normalizes the NCP's unsolicited
-  callbacks into the backend-neutral events `Zigbee.Adapter` promises:
+  sequence (config, security/keys, endpoints, policies, form/reestablish,
+  unicast), and normalizes the NCP's unsolicited callbacks into the
+  backend-neutral events `Zigbee.Adapter` promises:
 
       {:zigbee, :device_joined, %{node_id: _, eui64: _}}   # trustCenterJoinHandler
       {:zigbee, :message, %Zigbee.Message{}}                # incomingMessageHandler
@@ -12,6 +13,9 @@ defmodule Zigbee.EZSP.Adapter do
   Start it through the `Zigbee` facade:
 
       {:ok, zb} = Zigbee.start_link(Zigbee.EZSP.Adapter, device: "/dev/ttyACM0", speed: 460_800)
+
+  Tests may inject a pre-started EZSP process with the `:ezsp` option instead of a
+  serial `:device` (see `Zigbee.FakeEZSP`).
   """
 
   @behaviour Zigbee.Adapter

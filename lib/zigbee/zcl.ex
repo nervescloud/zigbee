@@ -4,10 +4,11 @@ defmodule Zigbee.ZCL do
   inside an APS unicast on a Home Automation endpoint (profile 0x0104).
 
   This is pure, transport-agnostic encoding/decoding: build the global commands
-  we need to interview and configure a sensor (Read Attributes, Configure
-  Reporting) and decode what it sends back (Read Attributes Response, Report
-  Attributes). It is deliberately independent of EZSP; `Zigbee.EZSP.Adapter` wraps
-  these bytes in an `EmberApsFrame` and hands them to the NCP.
+  we need to interview, configure, and control a device (Read Attributes, Write
+  Attributes — including manufacturer-specific — and Configure Reporting) and
+  decode what it sends back (Read Attributes Response, Report Attributes). It is
+  deliberately independent of EZSP; `Zigbee.EZSP.Adapter` wraps these bytes in an
+  `EmberApsFrame` and hands them to the NCP.
 
   ## ZCL frame layout
 

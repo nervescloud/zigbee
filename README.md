@@ -62,7 +62,8 @@ returns once the network is up. Endpoints are registered as part of forming
 ```
 
 Options: `:channel` (11..26, default 15), `:pan_id`, `:extended_pan_id`,
-`:tx_power`, `:network_key`, and `:endpoints` (`:default`, `:none`, or a list of
+`:tx_power`, `:network_key`, `:tc_link_key` (trust-center link-key master; random
+by default), and `:endpoints` (`:default`, `:none`, or a list of
 `{endpoint, profile, device_id, in_clusters, out_clusters}`).
 
 ### Pairing a device
@@ -102,6 +103,16 @@ spec codecs and send it with `Zigbee.send_aps/7`:
 frame = Zigbee.ZCL.read_attributes(_seq = 1, [0x0004, 0x0005])
 {:ok, _aps_seq} = Zigbee.send_aps(zb, dev.node_id, 0x0104, 0x0000, 1, frame)
 # the reply arrives as {:zigbee, :message, %Zigbee.Message{}}; decode it with Zigbee.ZCL.decode/1
+```
+
+Writes work the same way. `Zigbee.ZCL.write_attributes/3` takes a
+`:manufacturer_code` for vendor-specific attributes:
+
+```elixir
+# write an Aqara manuSpecificLumi attribute (cluster 0xFCC0, attr 0x0009 = 1)
+frame = Zigbee.ZCL.write_attributes(1, [%{attr_id: 0x0009, type: 0x20, value: 1}],
+          manufacturer_code: 0x115F)
+{:ok, _aps_seq} = Zigbee.send_aps(zb, dev.node_id, 0x0104, 0xFCC0, 1, frame)
 ```
 
 ### Handling events yourself
@@ -154,6 +165,7 @@ dongle's flash (NVM3) and on the devices themselves:
 | Joined devices + EUI64↔node-id table | Dongle NVM3 | ✅ | ✅ |
 | APS link keys | Dongle NVM3 | ✅ | ✅ |
 | Endpoints (`add_endpoint`) | Host RAM (NCP doesn't persist them) | ⚠️ re-register each boot | ⚠️ re-register each boot |
+| TC / key-request policies + NCP config | Host RAM (volatile) | ⚠️ re-applied on reestablish | ⚠️ re-applied on reestablish |
 | Bindings + reporting config | On the device (its own flash) | ✅ | ✅ |
 | Your app state (`readings`, device list) | Your process | ❌ rebuild it | ❌ rebuild it |
 
@@ -172,19 +184,18 @@ end
 Zigbee.reestablish_or_form_network(zb, channel: 15)
 ```
 
-`reestablish_network/2` re-registers the endpoints (host-side, not persisted) and calls
-`networkInit`. Because bindings and reporting live on the devices, they keep
+`reestablish_network/2` re-applies the host-side state the NCP drops on reset —
+the endpoints **and** the trust-center / key-request policies and config — then
+calls `networkInit`. Because bindings and reporting live on the devices, they keep
 reporting to the coordinator with no re-pairing or re-interviewing, as long as
 it comes back on the same network with the same endpoints. Your app-level state
 (the readings map) is the only thing you rebuild; it repopulates as reports arrive
 (the `SensorHub` example tracks devices as it hears from them, and a fuller hub can
 read the NCP's child/address table to repopulate the list eagerly).
 
-> **Caveat (unverified):** on the ZBT-2's current firmware, a `networkInit` after a
-> `form_network` returned `NOT_JOINED` in early testing, so the stored network may
-> not have persisted. The `reestablish_network` path is written to the spec but
-> still needs confirming against real paired devices. Until then, treat restart and
-> rejoin as designed but not yet proven.
+The stored network survives NCP resets in practice: forming once and then
+`reestablish_network/2` brings the same PAN back and paired devices re-attach
+(exercised live against a ZBT-2 and in the adapter test suite).
 
 ## Supported dongles
 
@@ -247,11 +258,16 @@ implementation.
 
 ## Status
 
-Codecs (`ZCL`, `ZDO`, `EZSP.Frame`, `ASH`) are unit-tested; `Interview` is tested
-end-to-end against the in-memory `Zigbee.MockAdapter` (no hardware). The EZSP backend
-(form / permit-join / add-endpoint) is verified live against a ZBT-2 on EmberZNet
-7.5.1.0 through the facade. The `Interview` pairing→report flow still awaits live
-Zigbee end-devices to validate the incoming-message layout and per-device quirks.
+Codecs (`ZCL`, `ZDO`, `EZSP.Frame`, `ASH`) are unit-tested; `Zigbee.EZSP.Adapter`
+has integration tests that drive form / reestablish / permit-join / join-handling /
+incoming-decode against a fake NCP (`Zigbee.FakeEZSP`, injected via the `:ezsp`
+option); and `Interview` is tested end-to-end against the in-memory
+`Zigbee.MockAdapter` (no hardware).
+
+Live against a ZBT-2 on EmberZNet 7.5.1.0, the full flow is verified end-to-end:
+form / reestablish, pairing, interview, bind + configure-reporting, and decoding
+temperature, humidity, and button events from real Aqara end-devices (Climate
+Sensor W100, Wireless Mini Switch T1, Temperature & Humidity Sensor T1).
 
 ## Testing
 
