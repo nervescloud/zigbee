@@ -14,6 +14,7 @@ defmodule Zigbee.EZSP.AdapterTest do
   @permit_joining 0x22
   @import_transient_key 0x0111
   @set_manufacturer_code 0x15
+  @remove_device 0xA8
   @join_frame 0x0024
   @incoming_frame 0x0045
 
@@ -163,14 +164,39 @@ defmodule Zigbee.EZSP.AdapterTest do
       refute Enum.any?(FakeEZSP.calls(fake), &match?({@set_manufacturer_code, _}, &1))
     end
 
-    test "skips the workaround on a device-left (update=2) event", %{fake: fake, adapter: adapter} do
+    test "emits :device_left and skips the workaround on a device-left (update=2) event", %{
+      fake: fake,
+      adapter: adapter
+    } do
       send(
         adapter,
         {:ezsp_callback, %{frame_id: @join_frame, params: join_params(0xE46E, @lumi_eui, 2)}}
       )
 
-      assert_receive {:zigbee, :device_joined, _}
+      # A departure is reported as :device_left, not mislabelled as a join.
+      assert_receive {:zigbee, :device_left, %{node_id: 0xE46E, eui64: @lumi_eui}}
+      refute_received {:zigbee, :device_joined, _}
       refute Enum.any?(FakeEZSP.calls(fake), &match?({@set_manufacturer_code, _}, &1))
+    end
+  end
+
+  describe "remove_device" do
+    test "issues removeDevice with dest+target EUI64 and reports success", %{
+      fake: fake,
+      adapter: adapter
+    } do
+      assert :ok = Adapter.remove_device(adapter, 0xE46E, @lumi_eui)
+
+      # removeDevice params: destShort (LE) + destLong + targetLong (device removes itself).
+      assert FakeEZSP.call_params(fake, @remove_device) ==
+               <<0x6E, 0xE4>> <> @lumi_eui <> @lumi_eui
+    end
+
+    test "surfaces a non-success EmberStatus as an error" do
+      {:ok, fake} = FakeEZSP.start_link(responses: %{@remove_device => <<0x94>>})
+      {:ok, adapter} = Adapter.start_link(ezsp: fake)
+
+      assert {:error, {:remove_device, _}} = Adapter.remove_device(adapter, 0x1234, @lumi_eui)
     end
   end
 

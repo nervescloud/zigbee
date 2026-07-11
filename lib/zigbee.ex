@@ -32,6 +32,7 @@ defmodule Zigbee do
   The subscriber (set with `subscribe/2`) receives backend-neutral events:
 
       {:zigbee, :device_joined, %{node_id: _, eui64: _}}
+      {:zigbee, :device_left,   %{node_id: _, eui64: _}}
       {:zigbee, :message, %Zigbee.Message{}}
 
   `Zigbee.Interview` consumes these for you; consume them yourself only for custom
@@ -135,6 +136,23 @@ defmodule Zigbee do
         opts \\ []
       ),
       do: m.send_aps(r, node_id, profile, cluster, dst_endpoint, payload, opts)
+
+  @doc """
+  Remove (unpair) a paired device: instruct it to leave the network and drop it
+  from the coordinator. `node_id` is the device's 16-bit network address and
+  `eui64` its raw 8-byte little-endian IEEE address (both known from the join /
+  interview, e.g. the `%{node_id, eui64}` from `Zigbee.Interview.open_and_wait/3`).
+
+  Returns `:ok` once the radio accepts the request. This is coordinator-driven and
+  authenticated with the trust-center link key, so it's more robust than an
+  app-level leave; the device's actual departure arrives asynchronously as a
+  `{:zigbee, :device_left, %{node_id: _, eui64: _}}` event to the subscriber. A
+  device that is offline when removed is dropped from the coordinator's tables and
+  will not be readmitted with its old key, but won't leave over the air until it is
+  reachable again.
+  """
+  def remove_device(%Adapter{module: m, ref: r}, node_id, eui64),
+    do: m.remove_device(r, node_id, eui64)
 
   @doc """
   The coordinator's own identifier: its 64-bit IEEE 802.15.4 extended address

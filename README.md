@@ -93,6 +93,32 @@ Zigbee.Interview.collect(zb, 60_000)
 #=> [%{cluster: 0x0402, endpoint: 1, value: 21.4, unit: "°C"}, ...]
 ```
 
+### Unpairing a device
+
+`Zigbee.remove_device/3` unpairs a paired device: it instructs the device to leave
+the network and drops it from the coordinator. Pass the device's `node_id` and
+`eui64` (both known from the join/interview):
+
+```elixir
+:ok = Zigbee.remove_device(zb, dev.node_id, dev.eui64)
+```
+
+The call returns `:ok` once the radio accepts the request. Removal is
+coordinator-driven and authenticated with the trust-center link key (more robust
+than an app-level leave). The device's actual departure arrives asynchronously as a
+`{:zigbee, :device_left, %{node_id: _, eui64: _}}` event to the subscriber, so watch
+for that to confirm and to prune your own state:
+
+```elixir
+receive do
+  {:zigbee, :device_left, %{node_id: id}} -> drop_device(id)
+end
+```
+
+A device that is offline when removed is dropped from the coordinator's tables and
+won't be readmitted with its old key, but won't leave over the air until it is
+reachable again.
+
 ### Sending your own commands
 
 For anything the `Interview` helpers don't cover, build a raw APS payload with the
@@ -123,6 +149,7 @@ for you, but you can handle them directly for custom flows:
 ```elixir
 receive do
   {:zigbee, :device_joined, %{node_id: id, eui64: eui}} -> ...
+  {:zigbee, :device_left, %{node_id: id}} -> ...
   {:zigbee, :message, %Zigbee.Message{cluster: c, payload: p}} -> Zigbee.ZCL.decode(p)
 end
 ```

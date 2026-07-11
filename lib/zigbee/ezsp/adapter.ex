@@ -80,6 +80,9 @@ defmodule Zigbee.EZSP.Adapter do
   @stack_status_frame 0x0019
   @join_frame 0x0024
   @incoming_frame 0x0045
+  # EmberDeviceUpdate value in a trustCenterJoinHandler meaning the device LEFT the
+  # network (0=secured rejoin, 1=unsecured join, 2=device left, 3=unsecured rejoin).
+  @device_left 2
   @network_up 0x90
   # EmberStatus NOT_JOINED, networkInit's answer when no network is stored.
   @not_joined 0x93
@@ -113,6 +116,9 @@ defmodule Zigbee.EZSP.Adapter do
   @impl Zigbee.Adapter
   def send_aps(a, node_id, profile, cluster, dst_endpoint, payload, opts),
     do: GenServer.call(a, {:send_aps, node_id, profile, cluster, dst_endpoint, payload, opts})
+
+  @impl Zigbee.Adapter
+  def remove_device(a, node_id, eui64), do: GenServer.call(a, {:remove_device, node_id, eui64})
 
   @impl Zigbee.Adapter
   def identifier(a), do: GenServer.call(a, :identifier)
@@ -168,6 +174,9 @@ defmodule Zigbee.EZSP.Adapter do
 
   def handle_call({:send_aps, node_id, profile, cluster, dst_ep, payload, opts}, _from, s),
     do: {:reply, do_send_aps(s.ezsp, node_id, profile, cluster, dst_ep, payload, opts), s}
+
+  def handle_call({:remove_device, node_id, eui64}, _from, s),
+    do: {:reply, do_remove_device(s.ezsp, node_id, eui64), s}
 
   # form_network / reestablish_network defer their reply until NETWORK_UP arrives (or times out).
   def handle_call({:form_network, opts}, from, s) do
@@ -256,7 +265,9 @@ defmodule Zigbee.EZSP.Adapter do
       "trustCenterJoin node=0x#{Integer.to_string(j.node_id, 16)} update=#{j.update} decision=#{j.decision}"
     )
 
-    {:ok, {:zigbee, :device_joined, Map.take(j, [:node_id, :eui64])}}
+    # A DEVICE_LEFT update is a departure, not a join — surface it as :device_left.
+    event = if j.update == @device_left, do: :device_left, else: :device_joined
+    {:ok, {:zigbee, event, Map.take(j, [:node_id, :eui64])}}
   end
 
   defp normalize(%{frame_id: @incoming_frame, params: params}) do
@@ -319,6 +330,17 @@ defmodule Zigbee.EZSP.Adapter do
 
     {:ok, %{params: <<status, aps_seq>>}} = EZSP.command(ezsp, :send_unicast, params)
     if status == 0x00, do: {:ok, aps_seq}, else: {:error, {:send_unicast, Status.decode(status)}}
+  end
+
+  # removeDevice(destShort, destLong, targetLong): tell `node_id` (dest = the device
+  # itself) to leave, using the trust-center link key. We're removing the device
+  # itself, so destLong and targetLong are both its EUI64. The device's departure
+  # comes back later as a trustCenterJoinHandler with update == DEVICE_LEFT, which we
+  # normalize to a {:zigbee, :device_left, _} event.
+  defp do_remove_device(ezsp, node_id, eui64) do
+    params = <<node_id::little-16, eui64::binary-8, eui64::binary-8>>
+    {:ok, %{params: <<status>>}} = EZSP.command(ezsp, :remove_device, params)
+    check(status, :remove_device)
   end
 
   # Arm the deferred reply that form_network/reestablish_network complete on when NETWORK_UP arrives.
@@ -470,7 +492,7 @@ defmodule Zigbee.EZSP.Adapter do
   # Skip on DEVICE_LEFT (update == 2); otherwise set the coordinator's manufacturer
   # code to Lumi's if the joining device has a Lumi OUI. eui64 is wire order (LE), so
   # the OUI is the last 3 bytes reversed.
-  defp maybe_apply_manuf_workaround(_ezsp, %{update: 2}), do: :ok
+  defp maybe_apply_manuf_workaround(_ezsp, %{update: @device_left}), do: :ok
 
   defp maybe_apply_manuf_workaround(ezsp, %{eui64: <<_::binary-5, b6, b7, b8>>}) do
     oui = <<b8, b7, b6>>

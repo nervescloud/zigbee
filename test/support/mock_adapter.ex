@@ -35,6 +35,8 @@ defmodule Zigbee.MockAdapter do
     do: GenServer.call(a, {:send_aps, node_id, profile, cluster, dst_ep, payload, opts})
 
   @impl Zigbee.Adapter
+  def remove_device(a, node_id, eui64), do: GenServer.call(a, {:remove_device, node_id, eui64})
+  @impl Zigbee.Adapter
   def identifier(a), do: GenServer.call(a, :identifier)
   @impl Zigbee.Adapter
   def reset_network(_a), do: :ok
@@ -74,6 +76,14 @@ defmodule Zigbee.MockAdapter do
 
   def handle_call({:emit_join, node_id, eui64}, _from, s) do
     send(s.subscriber, {:zigbee, :device_joined, %{node_id: node_id, eui64: eui64}})
+    {:reply, :ok, s}
+  end
+
+  # Accept the removal and, like a real NCP, announce the departure to the subscriber.
+  def handle_call({:remove_device, node_id, eui64}, _from, s) do
+    if s.subscriber,
+      do: send(s.subscriber, {:zigbee, :device_left, %{node_id: node_id, eui64: eui64}})
+
     {:reply, :ok, s}
   end
 

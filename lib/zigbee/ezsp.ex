@@ -43,6 +43,9 @@ defmodule Zigbee.EZSP do
     form_network: 0x001E,
     leave_network: 0x0020,
     permit_joining: 0x0022,
+    # Trust-center: instruct a device to leave and drop it from the TC's tables.
+    # (Frame id stable since pre-v8 EZSP; verify against firmware on new NCPs.)
+    remove_device: 0x00A8,
     get_network_parameters: 0x0028,
     send_unicast: 0x0034,
     send_broadcast: 0x0036,

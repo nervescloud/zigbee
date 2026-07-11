@@ -11,7 +11,11 @@ defmodule Zigbee.Adapter do
   A backend is a process that delivers normalized events to its subscriber:
 
       {:zigbee, :device_joined, %{node_id: _, eui64: _}}
+      {:zigbee, :device_left,   %{node_id: _, eui64: _}}
       {:zigbee, :message, %Zigbee.Message{}}
+
+  `:device_left` fires when a device leaves the network — whether it left on its
+  own or was removed via `remove_device/3`.
 
   Callers usually go through the `Zigbee` facade, which pairs a backend module
   with its process in a `%Zigbee.Adapter{}` handle and dispatches to it.
@@ -64,6 +68,16 @@ defmodule Zigbee.Adapter do
               payload :: binary(),
               opts :: keyword()
             ) :: {:ok, 0..0xFF} | {:error, term()}
+
+  @doc """
+  Remove (unpair) a device: instruct it to leave the network and drop it from the
+  coordinator's tables. `node_id` is the device's 16-bit network address, `eui64`
+  its raw 8-byte little-endian IEEE address. Returns `:ok` once the NCP accepts the
+  request; the device's actual departure arrives as a `{:zigbee, :device_left, _}`
+  event.
+  """
+  @callback remove_device(ref(), node_id :: 0..0xFFFF, eui64 :: binary()) ::
+              :ok | {:error, term()}
 
   @doc """
   The coordinator's own identifier: its 64-bit IEEE 802.15.4 extended address
