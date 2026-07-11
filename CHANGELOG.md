@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-07-12
+
+### Added
+
+- `:indirect_transmission_timeout` option for `Zigbee.form_network/2` and
+  `Zigbee.reestablish_network/2` (and thus `reestablish_or_form_network/2`) — the
+  milliseconds the coordinator buffers a unicast for a sleepy end device to collect on
+  its next poll before discarding it (0..65535, default `7680`, the Zigbee MAC spec's
+  `macTransactionPersistenceTime`). Raise it so buffered frames survive longer poll
+  gaps on very sleepy devices. Volatile NCP config, re-applied on both form and
+  reestablish; out-of-range values are clamped to the uint16 field.
+
 ## [0.3.0] - 2026-07-11
 
 ### Added
