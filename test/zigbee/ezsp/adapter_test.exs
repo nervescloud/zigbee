@@ -116,6 +116,30 @@ defmodule Zigbee.EZSP.AdapterTest do
     end
   end
 
+  describe ":indirect_transmission_timeout" do
+    test "defaults to 7680 ms when not given", %{fake: fake, adapter: adapter} do
+      assert {:ok, _} = Adapter.form_network(adapter, channel: 15)
+      assert {0x12, 7680} in config_pairs(FakeEZSP.calls(fake))
+    end
+
+    test "is honored on form_network (config 0x12)", %{fake: fake, adapter: adapter} do
+      assert {:ok, _} = Adapter.form_network(adapter, indirect_transmission_timeout: 20_000)
+      assert {0x12, 20_000} in config_pairs(FakeEZSP.calls(fake))
+    end
+
+    test "is honored on reestablish_network", %{fake: fake, adapter: adapter} do
+      assert {:ok, _} =
+               Adapter.reestablish_network(adapter, indirect_transmission_timeout: 20_000)
+
+      assert {0x12, 20_000} in config_pairs(FakeEZSP.calls(fake))
+    end
+
+    test "clamps out-of-range values to the uint16 field", %{fake: fake, adapter: adapter} do
+      assert {:ok, _} = Adapter.form_network(adapter, indirect_transmission_timeout: 100_000)
+      assert {0x12, 0xFFFF} in config_pairs(FakeEZSP.calls(fake))
+    end
+  end
+
   describe "permit_joining" do
     test "installs the well-known transient key before opening the window", %{
       fake: fake,
