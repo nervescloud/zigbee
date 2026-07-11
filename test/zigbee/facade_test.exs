@@ -22,4 +22,13 @@ defmodule Zigbee.FacadeTest do
     {:ok, zb} = Zigbee.start_link(MockAdapter, has_network: false)
     assert {:ok, %{source: :formed}} = Zigbee.reestablish_or_form_network(zb)
   end
+
+  test "remove_device/3 unpairs a device and surfaces a :device_left event" do
+    {:ok, zb} = Zigbee.start_link(MockAdapter)
+    :ok = Zigbee.subscribe(zb, self())
+
+    eui = <<8, 7, 6, 5, 4, 3, 2, 1>>
+    assert :ok = Zigbee.remove_device(zb, 0xA1B2, eui)
+    assert_receive {:zigbee, :device_left, %{node_id: 0xA1B2, eui64: ^eui}}
+  end
 end
