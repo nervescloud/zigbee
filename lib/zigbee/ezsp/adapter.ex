@@ -38,6 +38,8 @@ defmodule Zigbee.EZSP.Adapter do
   @config_end_device_poll_timeout 0x13
   @config_tc_address_cache_size 0x19
   @config_transient_key_timeout_s 0x36
+  # Zigbee MAC macTransactionPersistenceTime default (ms); overridable per network.
+  @default_indirect_transmission_timeout 7680
   # EZSP policy IDs (EzspPolicyId). NOTE the correct values: TC_KEY_REQUEST is 0x05
   # and APP_KEY_REQUEST is 0x06. (Earlier this file used 0x09/0x0A — 0x09 is actually
   # TC_REJOINS_USING_WELL_KNOWN_KEY and 0x0A is a removed RF4CE policy that returns
@@ -355,7 +357,7 @@ defmodule Zigbee.EZSP.Adapter do
   defp prepare_reestablish(ezsp, opts) do
     endpoints = Keyword.get(opts, :endpoints, :default)
 
-    with :ok <- apply_config(ezsp),
+    with :ok <- apply_config(ezsp, opts),
          :ok <- register_endpoints(ezsp, endpoints),
          :ok <- apply_policies(ezsp) do
       {:ok, %{params: <<status>>}} = EZSP.command(ezsp, :network_init, <<0x0000::little-16>>)
@@ -392,7 +394,7 @@ defmodule Zigbee.EZSP.Adapter do
     tc_link_key = Keyword.get(opts, :tc_link_key, :crypto.strong_rand_bytes(16))
     endpoints = Keyword.get(opts, :endpoints, :default)
 
-    with :ok <- apply_config(ezsp),
+    with :ok <- apply_config(ezsp, opts),
          :ok <- register_endpoints(ezsp, endpoints),
          :ok <- set_security_state(ezsp, tc_link_key, network_key),
          :ok <- apply_policies(ezsp) do
@@ -425,15 +427,27 @@ defmodule Zigbee.EZSP.Adapter do
   # Apply the base + TC/end-device config suite. Strict on stack profile + security
   # level (form fails without them); best-effort on the rest (some are fixed in NCP
   # firmware and can't be changed). Must run before form_network / network_init.
-  defp apply_config(ezsp) do
+  defp apply_config(ezsp, opts) do
     with :ok <- set_config(ezsp, @config_stack_profile, 2),
          :ok <- set_config(ezsp, @config_security_level, 5) do
       best_effort_config(ezsp, @config_tc_address_cache_size, 2)
-      best_effort_config(ezsp, @config_indirect_transmission_timeout, 7680)
+      best_effort_config(ezsp, @config_indirect_transmission_timeout, indirect_timeout(opts))
       best_effort_config(ezsp, @config_end_device_poll_timeout, 8)
       best_effort_config(ezsp, @config_transient_key_timeout_s, 300)
       best_effort_config(ezsp, @config_max_end_device_children, 32)
       :ok
+    end
+  end
+
+  # Indirect transmission timeout (ms): how long the coordinator buffers a unicast for a sleepy
+  # end device to collect on its next poll before discarding it. Defaults to the Zigbee MAC spec's
+  # `macTransactionPersistenceTime` (7680 ms); raise it (via the `:indirect_transmission_timeout`
+  # option to form/reestablish) so buffered frames survive longer poll gaps on very sleepy devices.
+  # Clamped to the EZSP field's uint16 range.
+  defp indirect_timeout(opts) do
+    case Keyword.get(opts, :indirect_transmission_timeout, @default_indirect_transmission_timeout) do
+      v when is_integer(v) -> v |> max(0) |> min(0xFFFF)
+      _ -> @default_indirect_transmission_timeout
     end
   end
 

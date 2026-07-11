@@ -63,8 +63,13 @@ returns once the network is up. Endpoints are registered as part of forming
 
 Options: `:channel` (11..26, default 15), `:pan_id`, `:extended_pan_id`,
 `:tx_power`, `:network_key`, `:tc_link_key` (trust-center link-key master; random
-by default), and `:endpoints` (`:default`, `:none`, or a list of
-`{endpoint, profile, device_id, in_clusters, out_clusters}`).
+by default), `:endpoints` (`:default`, `:none`, or a list of
+`{endpoint, profile, device_id, in_clusters, out_clusters}`), and
+`:indirect_transmission_timeout` — milliseconds the coordinator buffers a unicast
+for a sleepy end device to collect on its next poll before discarding it (0..65535,
+default `7680`). Raise it so buffered frames survive longer poll gaps on very sleepy
+devices. It's volatile NCP config, so pass it to `reestablish_network/2` too (it's
+re-applied on every restart).
 
 ### Pairing a device
 

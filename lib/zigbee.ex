@@ -75,9 +75,19 @@ defmodule Zigbee do
   Options (all optional): `:channel` (11..26, default 15), `:pan_id`,
   `:extended_pan_id` (8 bytes), `:tx_power` (dBm), `:network_key` (16 bytes),
   `:tc_link_key` (16 bytes, the trust-center link-key derivation master; random by
-  default), and `:endpoints` (`:default` registers HA endpoint 1, `:none`, or a
-  list of `{endpoint, profile, device_id, in_clusters, out_clusters}`). Endpoints
-  are registered here because they must exist before the network comes up.
+  default), `:endpoints` (`:default` registers HA endpoint 1, `:none`, or a
+  list of `{endpoint, profile, device_id, in_clusters, out_clusters}`), and
+  `:indirect_transmission_timeout` (see below). Endpoints are registered here because
+  they must exist before the network comes up.
+
+  ## `:indirect_transmission_timeout`
+
+  Milliseconds the coordinator buffers a unicast for a *sleepy* end device to collect
+  on its next poll before discarding it (0..65535, default `7680` — the Zigbee MAC
+  spec's `macTransactionPersistenceTime`). Raise it so buffered frames (attribute
+  reads, binds, configure-reporting, leaves) survive longer poll gaps on very sleepy
+  devices, at the cost of holding NCP packet buffers longer. It's volatile NCP config,
+  re-applied on every `form_network/2` and `reestablish_network/2`, so pass it on both.
   """
   def form_network(%Adapter{module: m, ref: r}, opts \\ []), do: m.form_network(r, opts)
 
@@ -86,6 +96,9 @@ defmodule Zigbee do
   re-registering endpoints first. Returns `{:ok, params}`, or `{:error, :no_network}`
   if nothing is stored. Use this on restart (not `form_network/2`): forming makes a
   *new* network (new key) and orphans already-paired devices.
+
+  Accepts the same volatile-config options as `form_network/2` (e.g. `:endpoints`,
+  `:indirect_transmission_timeout`), which are re-applied to the NCP on each restart.
   """
   def reestablish_network(%Adapter{module: m, ref: r}, opts \\ []),
     do: m.reestablish_network(r, opts)
