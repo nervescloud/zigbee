@@ -11,15 +11,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Zigbee.remove_device/3` — unpair a paired device by instructing it to leave the
   network (coordinator-driven, trust-center authenticated via the EmberZNet
   `removeDevice` command) and dropping it from the coordinator's tables. Backed by a
-  new `Zigbee.Adapter.remove_device/3` callback.
-- A `{:zigbee, :device_left, %{node_id: _, eui64: _}}` normalized event, emitted when
-  a device leaves the network (on its own or via `remove_device/3`).
+  new `remove_device/3` callback on `Zigbee.Adapter`.
+- A new `:device_left` event (payload `%{node_id: _, eui64: _}`), delivered to the
+  subscriber when a device leaves the network — on its own or via `remove_device/3`.
 
 ### Fixed
 
 - `Zigbee.EZSP.Adapter` mislabelled a device *departure* (a `trustCenterJoinHandler`
-  with `EmberDeviceUpdate` = DEVICE_LEFT) as a `{:zigbee, :device_joined, _}` event;
-  it now emits `{:zigbee, :device_left, _}`.
+  with `EmberDeviceUpdate` = DEVICE_LEFT) as a device-join event; it now emits a
+  `:device_left` event.
 
 ## [0.2.0] - 2026-07-10
 
